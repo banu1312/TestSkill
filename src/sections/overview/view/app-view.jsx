@@ -1,230 +1,323 @@
-import { faker } from '@faker-js/faker';
+import React, { useState, useEffect } from 'react';
+import { DateRangePicker } from 'react-date-range';
+import { format, addDays, isValid, parseISO, differenceInYears, differenceInMonths } from 'date-fns';
 
+import { DataGrid } from '@mui/x-data-grid';
 import Container from '@mui/material/Container';
 import Grid from '@mui/material/Unstable_Grid2';
 import Typography from '@mui/material/Typography';
+import { Box, Card, Button, Popover } from '@mui/material';
 
-import Iconify from 'src/components/iconify';
+import { getAll } from 'src/API/sales';
 
-import AppTasks from '../app-tasks';
-import AppNewsUpdate from '../app-news-update';
-import AppOrderTimeline from '../app-order-timeline';
-import AppCurrentVisits from '../app-current-visits';
+import Scrollbar from 'src/components/scrollbar';
+
+import SearchToolbar from './search-toolbar';
 import AppWebsiteVisits from '../app-website-visits';
 import AppWidgetSummary from '../app-widget-summary';
-import AppTrafficBySite from '../app-traffic-by-site';
-import AppCurrentSubject from '../app-current-subject';
+import { applyFilter, getComparator } from './utils';
 import AppConversionRates from '../app-conversion-rates';
 
-// ----------------------------------------------------------------------
+const formatDate = (dateString) => {
+  const date = parseISO(dateString);
+  if (!isValid(date)) return '';
+  return format(date, 'yyyy-MM-dd');
+};
+
+const DATAGRID_COLUMNS = [
+  { field: 'No', headerName: 'No', width: 100, headerAlign: 'center', align: 'center' },
+  { field: 'product', headerName: 'Product Name', width: 250, headerAlign: 'center', align: 'center' },
+  { field: 'sales', headerName: 'Sales Item', width: 250, headerAlign: 'center', align: 'center', valueGetter: (params) => `${params.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} PCS` },
+  { field: 'revenue', headerName: 'Revenue', width: 250, headerAlign: 'center', align: 'center', valueGetter: (params) => `IDR ${params.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` },
+  { field: 'date', headerName: 'Date', width: 250, headerAlign: 'center', align: 'center', valueGetter: (params) => formatDate(params) },
+];
 
 export default function AppView() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState([
+    {
+      startDate: addDays(new Date(), -7),
+      endDate: new Date(),
+      key: 'selection',
+    }
+  ]);
+
+  const order = 'asc';
+  const orderBy = 'No';
+  const [filterName, setFilterName] = useState('');
+
+  const handleFilterByName = (event) => {
+    setFilterName(event.target.value);
+  };
+
+  useEffect(() => {
+    getAll().then((res) => {
+      setData(res.data.map((row, i) => ({
+        ...row,
+      })));
+      setLoading(false);
+    });
+  }, []);
+
+  const filterDataByDate = (d, startDate, endDate) => d.filter((item) => {
+    const itemDate = parseISO(item.date);
+    if (!isValid(itemDate)) return false;
+    return itemDate >= startDate && itemDate <= endDate;
+  });
+
+  const dataFiltered = applyFilter({
+    inputData: filterDataByDate(data, value[0].startDate, value[0].endDate),
+    comparator: getComparator(order, orderBy),
+    filterName,
+  }).map((row, index) => ({
+    ...row,
+    No: index + 1,
+  }));
+
+  const Calender = (event) => {
+    setAnchorEl(event.currentTarget);
+    setOpen(true);
+  };
+
+  const handleClose = () => {
+    setOpen(false);
+  };
+
+  const formatChartData = (filteredData) => {
+    const {startDate} = value[0];
+    const {endDate} = value[0];
+    const isMonthly = differenceInMonths(endDate, startDate) > 1;
+    const isYearly = differenceInYears(endDate, startDate) > 1;
+
+    const groupedData = filteredData.reduce((acc, curr) => {
+      const date = parseISO(curr.date);
+      if (!isValid(date)) return acc;
+      
+      let key;
+      if (isYearly) {
+        key = format(date, 'yyyy');
+      } else if (isMonthly) {
+        key = format(date, 'yyyy-MM');
+      } else {
+        key = format(date, 'yyyy-MM-dd');
+      }
+
+      if (!acc[key]) {
+        acc[key] = 0;
+      }
+
+      acc[key] += curr.sales;
+      return acc;
+    }, {});
+
+    const labels = Object.keys(groupedData).sort();
+    const salesData = labels.map((label) => groupedData[label]);
+
+    return { labels, salesData };
+  };
+
+  const { labels, salesData } = formatChartData(dataFiltered);
+
+  const formatChartDataForProducts = (filteredData) => {
+    const { startDate } = value[0];
+    const { endDate } = value[0];
+    const isMonthly = differenceInMonths(endDate, startDate) > 1;
+    const isYearly = differenceInYears(endDate, startDate) > 1;
+  
+    // Objek untuk menyimpan penjualan per produk
+    const productSales = {};
+  
+    // Iterasi data penjualan
+    filteredData.forEach((item) => {
+      const date = parseISO(item.date);
+      if (!isValid(date)) return;
+  
+      let key;
+      if (isYearly) {
+        key = format(date, 'yyyy');
+      } else if (isMonthly) {
+        key = format(date, 'yyyy-MM');
+      } else {
+        key = format(date, 'yyyy-MM-dd');
+      }
+  
+      // Mengakumulasi penjualan produk
+      if (!productSales[item.product]) {
+        productSales[item.product] = {};
+      }
+      if (!productSales[item.product][key]) {
+        productSales[item.product][key] = 0;
+      }
+      productSales[item.product][key] += item.sales;
+    });
+  
+    // Mengonversi struktur data menjadi format yang sesuai untuk AppConversionRates
+    const series = Object.keys(productSales).map((product) => {
+      const d = Object.values(productSales[product]);
+      return { label: product, value: d.reduce((total, v) => total + v, 0) };
+    });
+  
+    return { series };
+  };
+  const { series } = formatChartDataForProducts(dataFiltered);
+
+  const calculateTotalSalesAndRevenue = (filteredData) => {
+    let totalSales = 0;
+    let totalRevenue = 0;
+  
+    filteredData.forEach((item) => {
+      totalSales += item.sales;
+      totalRevenue += item.revenue;
+    });
+  
+    return { totalSales, totalRevenue };
+  };
+  
+  const findBestSellingProduct = (filteredData) => {
+    const productSalesMap = {};
+  
+    filteredData.forEach((item) => {
+      if (!productSalesMap[item.product]) {
+        productSalesMap[item.product] = 0;
+      }
+      productSalesMap[item.product] += item.sales;
+    });
+  
+    let bestSellingProduct = '';
+    let maxSales = 0;
+  
+    Object.entries(productSalesMap).forEach(([product, sales]) => {
+      if (sales > maxSales) {
+        maxSales = sales;
+        bestSellingProduct = product;
+      }
+    });
+  
+    return bestSellingProduct;
+  };
+
+  const { totalSales, totalRevenue } = calculateTotalSalesAndRevenue(dataFiltered);
+  const bestSellingProduct = findBestSellingProduct(dataFiltered);
+  console.log(bestSellingProduct);
   return (
     <Container maxWidth="xl">
       <Typography variant="h4" sx={{ mb: 5 }}>
-        Hi, Welcome back 👋
+        Dashboard
       </Typography>
 
       <Grid container spacing={3}>
-        <Grid xs={12} sm={6} md={3}>
-          <AppWidgetSummary
-            title="Weekly Sales"
-            total={714000}
-            color="success"
-            icon={<img alt="icon" src="/assets/icons/glass/ic_glass_bag.png" />}
-          />
-        </Grid>
+        <Grid container direction="column" xs={12} sm={12} md={12}>
+          <Grid container justifyContent="flex-end" spacing={2}>
+            <Grid item>
+              <Button variant="outlined" onClick={(e) => Calender(e)}>
+                Calendar
+              </Button>
+            </Grid>
+          </Grid>
+          <Grid container xs={12} sm={12} md={12}>
+            <Grid xs={12} sm={6} md={3}>
+              <AppWidgetSummary
+                title="Total Sales"
+                total={totalSales}
+                color="success"
+                icon={<img alt="icon" src="/assets/icons/glass/ic_glass_bag.png" />}
+              />
+            </Grid>
 
-        <Grid xs={12} sm={6} md={3}>
-          <AppWidgetSummary
-            title="New Users"
-            total={1352831}
-            color="info"
-            icon={<img alt="icon" src="/assets/icons/glass/ic_glass_users.png" />}
-          />
-        </Grid>
+            <Grid xs={12} sm={6} md={3}>
+              <AppWidgetSummary
+                title="Total Revenue"
+                total={totalRevenue}
+                color="warning"
+                icon={<img alt="icon" src="/assets/icons/glass/ic_glass_buy.png" />}
+              />
+            </Grid>
 
-        <Grid xs={12} sm={6} md={3}>
-          <AppWidgetSummary
-            title="Item Orders"
-            total={1723315}
-            color="warning"
-            icon={<img alt="icon" src="/assets/icons/glass/ic_glass_buy.png" />}
-          />
+            <Grid xs={12} sm={6} md={3}>
+              <AppWidgetSummary
+                title="Best Selling Product"
+                p={bestSellingProduct}
+                color="error"
+                icon={<img alt="icon" src="/assets/icons/glass/ic_glass_message.png" />}
+              />
+            </Grid>
+          </Grid>
         </Grid>
-
-        <Grid xs={12} sm={6} md={3}>
-          <AppWidgetSummary
-            title="Bug Reports"
-            total={234}
-            color="error"
-            icon={<img alt="icon" src="/assets/icons/glass/ic_glass_message.png" />}
-          />
-        </Grid>
-
-        <Grid xs={12} md={6} lg={8}>
+        <Grid xs={12} md={12} lg={12}>
           <AppWebsiteVisits
-            title="Website Visits"
-            subheader="(+43%) than last year"
+            title="Sales Trend"
             chart={{
-              labels: [
-                '01/01/2003',
-                '02/01/2003',
-                '03/01/2003',
-                '04/01/2003',
-                '05/01/2003',
-                '06/01/2003',
-                '07/01/2003',
-                '08/01/2003',
-                '09/01/2003',
-                '10/01/2003',
-                '11/01/2003',
-              ],
+              labels,
               series: [
                 {
-                  name: 'Team A',
-                  type: 'column',
-                  fill: 'solid',
-                  data: [23, 11, 22, 27, 13, 22, 37, 21, 44, 22, 30],
-                },
-                {
-                  name: 'Team B',
+                  name: 'Sales',
                   type: 'area',
                   fill: 'gradient',
-                  data: [44, 55, 41, 67, 22, 43, 21, 41, 56, 27, 43],
-                },
-                {
-                  name: 'Team C',
-                  type: 'line',
-                  fill: 'solid',
-                  data: [30, 25, 36, 30, 45, 35, 64, 52, 59, 36, 39],
+                  data: salesData,
                 },
               ],
             }}
           />
         </Grid>
 
-        <Grid xs={12} md={6} lg={4}>
-          <AppCurrentVisits
-            title="Current Visits"
-            chart={{
-              series: [
-                { label: 'America', value: 4344 },
-                { label: 'Asia', value: 5435 },
-                { label: 'Europe', value: 1443 },
-                { label: 'Africa', value: 4443 },
-              ],
-            }}
-          />
-        </Grid>
-
-        <Grid xs={12} md={6} lg={8}>
+        <Grid xs={12} md={12} lg={12}>
           <AppConversionRates
-            title="Conversion Rates"
-            subheader="(+43%) than last year"
+            title="Product Conversion Rates"
             chart={{
-              series: [
-                { label: 'Italy', value: 400 },
-                { label: 'Japan', value: 430 },
-                { label: 'China', value: 448 },
-                { label: 'Canada', value: 470 },
-                { label: 'France', value: 540 },
-                { label: 'Germany', value: 580 },
-                { label: 'South Korea', value: 690 },
-                { label: 'Netherlands', value: 1100 },
-                { label: 'United States', value: 1200 },
-                { label: 'United Kingdom', value: 1380 },
-              ],
+              series
             }}
           />
         </Grid>
-
-        <Grid xs={12} md={6} lg={4}>
-          <AppCurrentSubject
-            title="Current Subject"
-            chart={{
-              categories: ['English', 'History', 'Physics', 'Geography', 'Chinese', 'Math'],
-              series: [
-                { name: 'Series 1', data: [80, 50, 30, 40, 100, 20] },
-                { name: 'Series 2', data: [20, 30, 40, 80, 20, 80] },
-                { name: 'Series 3', data: [44, 76, 78, 13, 43, 10] },
-              ],
-            }}
-          />
-        </Grid>
-
-        <Grid xs={12} md={6} lg={8}>
-          <AppNewsUpdate
-            title="News Update"
-            list={[...Array(5)].map((_, index) => ({
-              id: faker.string.uuid(),
-              title: faker.person.jobTitle(),
-              description: faker.commerce.productDescription(),
-              image: `/assets/images/covers/cover_${index + 1}.jpg`,
-              postedAt: faker.date.recent(),
-            }))}
-          />
-        </Grid>
-
-        <Grid xs={12} md={6} lg={4}>
-          <AppOrderTimeline
-            title="Order Timeline"
-            list={[...Array(5)].map((_, index) => ({
-              id: faker.string.uuid(),
-              title: [
-                '1983, orders, $4220',
-                '12 Invoices have been paid',
-                'Order #37745 from September',
-                'New order placed #XF-2356',
-                'New order placed #XF-2346',
-              ][index],
-              type: `order${index + 1}`,
-              time: faker.date.past(),
-            }))}
-          />
-        </Grid>
-
-        <Grid xs={12} md={6} lg={4}>
-          <AppTrafficBySite
-            title="Traffic by Site"
-            list={[
-              {
-                name: 'FaceBook',
-                value: 323234,
-                icon: <Iconify icon="eva:facebook-fill" color="#1877F2" width={32} />,
-              },
-              {
-                name: 'Google',
-                value: 341212,
-                icon: <Iconify icon="eva:google-fill" color="#DF3E30" width={32} />,
-              },
-              {
-                name: 'Linkedin',
-                value: 411213,
-                icon: <Iconify icon="eva:linkedin-fill" color="#006097" width={32} />,
-              },
-              {
-                name: 'Twitter',
-                value: 443232,
-                icon: <Iconify icon="eva:twitter-fill" color="#1C9CEA" width={32} />,
-              },
-            ]}
-          />
-        </Grid>
-
-        <Grid xs={12} md={6} lg={8}>
-          <AppTasks
-            title="Tasks"
-            list={[
-              { id: '1', name: 'Create FireStone Logo' },
-              { id: '2', name: 'Add SCSS and JS files if required' },
-              { id: '3', name: 'Stakeholder Meeting' },
-              { id: '4', name: 'Scoping & Estimations' },
-              { id: '5', name: 'Sprint Showcase' },
-            ]}
-          />
+        <Grid xs={12} md={12} lg={12}>
+          <Card>
+            <SearchToolbar filterName={filterName} onFilterName={handleFilterByName} />
+            <Scrollbar>
+              {loading ? (
+                <Typography textAlign="center" variant="subtitle2" marginBottom={5}>.....Loading</Typography>
+              ) : (
+                <Box sx={{ height: 'auto' }}>
+                  <DataGrid
+                    rows={dataFiltered}
+                    columns={DATAGRID_COLUMNS}
+                    initialState={{
+                      pagination: {
+                        paginationModel: { page: 0, pageSize: 10 },
+                      },
+                    }}
+                    pageSizeOptions={[10, 25, 50, 100]}
+                    disableRowSelectionOnClick
+                    getRowHeight={() => 'auto'}
+                  />
+                </Box>
+              )}
+            </Scrollbar>
+          </Card>
         </Grid>
       </Grid>
+      <Popover
+        open={open}
+        anchorEl={anchorEl}
+        onClose={handleClose}
+        anchorOrigin={{
+          vertical: 'bottom',
+          horizontal: 'right',
+        }}
+        transformOrigin={{
+          vertical: 'top',
+          horizontal: 'right',
+        }}
+      >
+        <DateRangePicker
+          onChange={(item) => setValue([item.selection])}
+          moveRangeOnFirstSelection={false}
+          months={2}
+          ranges={value}
+          direction="vertical"
+        />
+      </Popover>
     </Container>
   );
 }
